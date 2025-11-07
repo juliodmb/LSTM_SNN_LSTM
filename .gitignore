@@ -1,0 +1,76 @@
+# Arquivos do Excel
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+
+# Arquivos temporários do Excel
+~$*.xlsx
+
+# Pastas com dados processados
+/data/processed/
+/output/
+
+# Ambiente virtual Python
+venv/
+.venv/
+
+# Arquivos sensíveis
+.env
+secrets.py
+
+# Cache do Python
+__pycache__/
+*.pyc
+
+# Jupyter Notebooks (opcional)
+.ipynb_checkpoints/
+
+# Ignorar arquivos HTML salvos do navegador
+*.html
+*.htm
+
+# Ignorar arquivos PNG 
+*.PNG 
+
+# Ignorar pasta figs/ 
+*.figs/ 
+
+# Ignorar pasta figs 
+*. figs/resumo_desbalanceamento.csv
+
+
+# Dados e resultados
+figs/
+output/
+data/processed/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# Arquivos temporários
+*.tmp
+*.temp
+
+# Arquivos de dados grandes
+*.xlsx
+*.csv
+*.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# ingnorar arquivos 
+Rede_neural.py
+dataset_balanceado_pytorch.pt
+visualizacao_becape.py
+visualizacao_gpu.py
