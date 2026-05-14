@@ -128,6 +128,9 @@ Colunas e encodings aplicados:
 Total canais SNN: 24
 """
 
+
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -182,6 +185,7 @@ COL_CONFIG = {
     'vazao_m3h':            'caudal',
     'bomba_coagulante_pct': 'discreto',
     'temperatura_C':        'ambiente',
+    
 }
 
 TODAS_COLUNAS = list(COL_CONFIG.keys())
@@ -367,126 +371,169 @@ COLORS = {
 def _plot_one_column(col: str, tipo: str, df_enc: pd.DataFrame,
                      win: pd.DataFrame, output_dir: str,
                      window_hours: int):
+    """
+    Gera 1 figura por variável com:
+      - Coluna esquerda (2/3): série temporal de cada encoding
+      - Coluna direita (1/3): histograma horizontal com skew e kurt
 
+    HISTOGRAMA:
+      density=True → normaliza área para 1 (estimativa de densidade)
+      orientation='horizontal' → eixo Y = valores, eixo X = densidade
+      skew = assimetria da distribuição (pandas .skew())
+      kurt = curtose — peso das caudas vs gaussiana (pandas .kurt())
+    """
+    # Determinar quais encodings esta coluna tem
     encs_disponiveis = []
     for enc in ('rate', 'delta', 'latency'):
         if f'{col}_{enc}' in win.columns:
             encs_disponiveis.append(enc)
 
+    n_rows = 1 + len(encs_disponiveis)  # raw + encodings
     t = np.arange(len(win))
 
-    # layout: 4 linhas (raw + encodings) | 2 colunas (sinal + hist)
-    n_rows = 1 + len(encs_disponiveis)
-
-    fig = plt.figure(figsize=(16, 3.2 * n_rows))
+    fig = plt.figure(figsize=(18, 3.5 * n_rows))
     fig.patch.set_facecolor('#0d1117')
+    gs = gridspec.GridSpec(n_rows, 3, figure=fig,
+                           hspace=0.5, wspace=0.3,
+                           left=0.06, right=0.97,
+                           top=0.93, bottom=0.05)
 
-    gs = gridspec.GridSpec(
-        n_rows, 2,
-        width_ratios=[4, 1],
-        hspace=0.45,
-        wspace=0.25,
-        left=0.06,
-        right=0.97,
-        top=0.92,
-        bottom=0.06
-    )
-
-    def style_ts(ax):
+    def _style_ax(ax):
         ax.set_facecolor('#161b22')
         for sp in ax.spines.values():
             sp.set_color(COLORS['grid'])
         ax.tick_params(colors=COLORS['text'], labelsize=7)
         ax.grid(axis='y', color=COLORS['grid'], lw=0.4, alpha=0.6)
+        ax.set_xlim(0, len(t))
+        xtick_steps = max(int(window_hours / 8 * 30), 1)
+        xticks = np.arange(0, len(t), xtick_steps)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([f'{int(x/30)}h' for x in xticks], fontsize=6)
 
-    def hist_ax(ax, y, color):
+    def _hist_ax(ax, y, color):
+        """
+        HISTOGRAMA HORIZONTAL:
+          Eixo Y = valores do encoding
+          Eixo X = densidade (área = 1)
+          bins=60 — resolução suficiente para distribuições não-gaussianas
 
+        SKEW: pd.Series.skew() — terceiro momento central normalizado
+          > 0: cauda à direita (maioria dos valores baixos, picos raros altos)
+          < 0: cauda à esquerda
+          = 0: simétrico
+
+        KURT: pd.Series.kurt() — quarto momento central normalizado - 3
+          > 0: leptocúrtico — caudas mais pesadas que gaussiana
+          < 0: platicúrtico — caudas mais leves
+          Fosfato industrial típico: kurt > 5 (muitos outliers extremos)
+        """
         ax.set_facecolor('#161b22')
-
         for sp in ax.spines.values():
             sp.set_color(COLORS['grid'])
-
         ax.tick_params(colors=COLORS['text'], labelsize=7)
-
         valid = y[~np.isnan(y)]
-
         if len(valid) > 0:
-            ax.hist(
-                valid,
-                bins=60,
-                orientation='horizontal',
-                color=color,
-                density=True,
-                alpha=0.8
-            )
-
-        ax.set_title("distribution", fontsize=7, color=COLORS['text'])
+            ax.hist(valid, bins=60, color=color, alpha=0.8,
+                    orientation='horizontal', density=True)
+            skew = pd.Series(valid).skew()
+            kurt = pd.Series(valid).kurt()
+            ax.text(0.97, 0.97,
+                    f'skew: {skew:.2f}\nkurt: {kurt:.2f}',
+                    transform=ax.transAxes,
+                    fontsize=7, va='top', ha='right',
+                    color=COLORS['text'], fontfamily='monospace')
+        ax.set_title('distribuição', color=COLORS['text'], fontsize=7, pad=3)
         ax.grid(axis='x', color=COLORS['grid'], lw=0.4, alpha=0.4)
 
-    # RAW
-    ax_ts = fig.add_subplot(gs[0,0])
-    style_ts(ax_ts)
-
+    # ── Linha 0: raw ──────────────────────────────────────────────────────
+    ax_ts = fig.add_subplot(gs[0, :2])
+    _style_ax(ax_ts)
     raw_vals = win[f'{col}_raw'].values
+    ax_ts.plot(t, raw_vals, color=COLORS['raw'], lw=0.8, alpha=0.9)
+    dead_vals = win[f'{col}_dead'].values
+    dead_idx  = np.where(dead_vals)[0]
+    if len(dead_idx) > 0:
+        ax_ts.scatter(dead_idx,
+                      np.full(len(dead_idx), np.nanmin(raw_vals)),
+                      color=COLORS['dead'], s=3, alpha=0.7, zorder=5,
+                      label='Dead state')
+        ax_ts.legend(fontsize=6, facecolor='#161b22',
+                     edgecolor=COLORS['grid'], labelcolor=COLORS['text'])
+    ax_ts.set_title(f'{col}  [raw]', color='#e6edf3', fontsize=8, loc='left')
 
-    ax_ts.plot(t, raw_vals, color=COLORS['raw'], lw=0.9)
+    ax_h = fig.add_subplot(gs[0, 2])
+    _hist_ax(ax_h, raw_vals, COLORS['raw'])
 
-    ax_ts.set_title(f"{col} [raw]", fontsize=8, color="#e6edf3", loc="left")
-
-    ax_hist = fig.add_subplot(gs[0,1])
-    hist_ax(ax_hist, raw_vals, COLORS['raw'])
-
-
-    # ENCODINGS
+    # ── Linhas 1+: encodings ──────────────────────────────────────────────
     for i, enc in enumerate(encs_disponiveis):
-
         row = i + 1
-
-        ax_ts = fig.add_subplot(gs[row,0])
-        style_ts(ax_ts)
-
+        ax_ts = fig.add_subplot(gs[row, :2])
+        _style_ax(ax_ts)
         y = win[f'{col}_{enc}'].values
         color = COLORS[enc]
 
-        if enc == "delta":
-
+        if enc == 'delta':
             pos = np.where(y >= 0, y, 0)
             neg = np.where(y < 0, y, 0)
-
-            ax_ts.fill_between(t, pos, color="#3fb950", alpha=0.8)
-            ax_ts.fill_between(t, neg, color="#f85149", alpha=0.8)
-
+            ax_ts.fill_between(t, pos, alpha=0.75, color='#3fb950',
+                               label='Release (+)')
+            ax_ts.fill_between(t, neg, alpha=0.75, color='#f85149',
+                               label='Uptake (−)')
             ax_ts.axhline(0, color=COLORS['grid'], lw=0.7, ls='--')
-
+            ax_ts.legend(fontsize=6, facecolor='#161b22',
+                         edgecolor=COLORS['grid'], labelcolor=COLORS['text'])
         else:
+            ax_ts.plot(t, y, color=color, lw=0.9, alpha=0.9)
 
-            ax_ts.plot(t, y, color=color, lw=0.9)
+        ax_ts.set_title(f'{col}  [{enc}]', color='#e6edf3',
+                        fontsize=8, loc='left')
 
-        ax_ts.set_title(f"{col} [{enc}]", fontsize=8, color="#e6edf3", loc="left")
-
-        ax_hist = fig.add_subplot(gs[row,1])
-        hist_ax(ax_hist, y, color)
-
+        ax_h = fig.add_subplot(gs[row, 2])
+        _hist_ax(ax_h, y, color)
 
     fig.suptitle(
-        f"{col} | tipo: {tipo} | janela: {window_hours}h",
-        fontsize=9,
-        color="#e6edf3",
-        fontfamily="monospace"
+        f'{col}  |  tipo: {tipo}  |  janela: {window_hours}h',
+        color='#e6edf3', fontsize=9, y=0.98, fontfamily='monospace'
     )
 
     out = os.path.join(output_dir, f'enc_{col}.png')
-
-    plt.savefig(
-        out,
-        dpi=130,
-        bbox_inches='tight',
-        facecolor=fig.get_facecolor()
-    )
-
+    plt.savefig(out, dpi=130, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
     plt.close()
-
     print(f"[PLOT] {out}")
+
+
+def plot_all(df_enc: pd.DataFrame, output_dir: str,
+             window_hours: int = 48, start_offset_hours: int = 200):
+
+    start = df_enc.index.min() + pd.Timedelta(hours=start_offset_hours)
+    end   = start + pd.Timedelta(hours=window_hours)
+
+    win = df_enc[start:end]
+
+    print(f"\n[PLOT] Janela: {start} → {end}  ({len(win)} steps)\n")
+
+    # Descobre automaticamente todas as variáveis RAW
+    base_cols = [c.replace("_raw","") for c in df_enc.columns if c.endswith("_raw")]
+
+    for col in base_cols:
+
+        if f"{col}_raw" not in win.columns:
+            continue
+
+        # define tipo automaticamente
+        if "mgL" in col or "metal" in col:
+            tipo = "quimico"
+        elif "sensor" in col:
+            tipo = "sensor"
+        elif "vazao" in col or "bomba" in col:
+            tipo = "controle"
+        elif "temperatura" in col:
+            tipo = "fisico"
+        else:
+            tipo = "outro"
+
+        _plot_one_column(col, tipo, df_enc, win, output_dir, window_hours)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. TENSOR FINAL PARA snnTorch
@@ -549,4 +596,4 @@ if __name__ == "__main__":
 
     print(f"\n[PRONTO] X shape {X.shape} — pronto para torch.FloatTensor(X)")
     print(f"[PRONTO] Próximo passo: snn_model.py")
-    print(f"[PRONTO] Ficheiros em: {OUTPUT_DIR}") 
+    print(f"[PRONTO] Ficheiros em: {OUTPUT_DIR}")
