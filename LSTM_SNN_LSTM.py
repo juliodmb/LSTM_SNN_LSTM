@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Nov  7 18:34:32 2025
 
-@author: julio
-"""
 
-"""
+
+
+
 Created on Mon Apr 13 16:53:40 2026
 
 @author: julio
-"""
 
-"""
+
+
 Demonstração completa e corrigida de todos os componentes do snnTorch 0.9.4
 Baseado exclusivamente na documentação oficial:
 https://snntorch.readthedocs.io/en/latest/
@@ -52,9 +51,9 @@ FLUXO COMPLETO DA REDE:
   [***Surrogate Gradient***] — só no backward
   substitui dΘ/dU = δ(U - U_thr) por função diferenciável
   padrão da biblioteca: ATan
-"""
 
-"""
+
+
 Pipeline SNN - EBPR PAO/GAO Phase Detection
 Dataset: Agtrup BlueKolding
 Autor: pipeline base para snnTorch 0.9.4
@@ -101,12 +100,10 @@ Colunas do dataset:
   AMBIENTE (condições externas):
     temperatura_C   — temperatura afluente — encoding: rate
     vazao_m3h       — caudal volumétrico   — encoding: rate + delta
-"""
 
-"""
-Pipeline SNN - EBPR PAO/GAO Phase Detection
-Dataset: Agtrup BlueKolding — todas as variáveis SCADA
-Autor: pipeline base para snnTorch 0.9.4
+
+
+
 
 Propósito deste script:
   Exploração visual ESTÁTICA dos encodings.
@@ -126,34 +123,7 @@ Colunas e encodings aplicados:
   temperatura_C       → rate                    (ambiente lento)
 
 Total canais SNN: 24
-"""
 
-
-
-
-"""
-Pipeline SNN - EBPR PAO/GAO Phase Detection
-Dataset: Agtrup BlueKolding — todas as variáveis SCADA
-Autor: pipeline base para snnTorch 0.9.4
-
-Propósito deste script:
-  Exploração visual ESTÁTICA dos encodings.
-  Não há modelo, não há treino.
-  O output é visual — para informar escolhas de hiperparâmetros futuros.
-
-Colunas e encodings aplicados:
-  fosfato_mgL         → rate + delta + latency  (biológico principal)
-  oxigenio_mgL        → rate + delta + latency  (biológico)
-  amonia_mgL          → rate + delta + latency  (biológico)
-  metal_natural_Lh    → rate + delta + latency  (actuador contínuo)
-  metal_colocado_Lh   → rate + delta + latency  (actuador contínuo)
-  sensor_entrada      → rate + delta            (caudal)
-  sensor_saida        → rate + delta            (caudal)
-  vazao_m3h           → rate + delta            (caudal)
-  bomba_coagulante_pct→ rate + delta            (actuador discreto)
-  temperatura_C       → rate                    (ambiente lento)
-
-Total canais SNN: 24
 """
 
 import numpy as np
