@@ -719,3 +719,71 @@ print(causal_df.head(20))
 
 causal_path = os.path.join(OUTPUT_DIR, "causal_edges.csv")
 causal_df.to_csv(causal_path, index=False)
+
+
+# 3. Calcular todos os encodings
+df_enc, encoded_cols = encode_all(df_val)
+
+# ==========================================
+# CALCULO DE TRANSFER ENTROPY
+# ==========================================
+
+from pyinform.transferentropy import transfer_entropy
+from itertools import permutations
+
+cols = [c for c in df_enc.columns if ('rate' in c or 'latency' in c)]
+
+df_te = df_enc[cols].copy()
+
+for c in df_te.columns:
+    df_te[c] = pd.qcut(df_te[c], q=10, labels=False, duplicates="drop")
+
+df_te = df_te.fillna(0).astype(int)
+
+def compute_te_lags(x, y, max_lag=20):
+
+    tes = []
+
+    for lag in range(1, max_lag):
+
+        try:
+            te = transfer_entropy(x[:-lag], y[lag:], k=1)
+            tes.append(te)
+        except:
+            tes.append(0)
+
+    return max(tes)
+
+results = []
+
+for source, target in permutations(df_te.columns, 2):
+
+    x = df_te[source].values
+    y = df_te[target].values
+
+    te = compute_te_lags(x, y)
+
+    if te > 0.02:
+        results.append({
+            "source": source,
+            "target": target,
+            "transfer_entropy": te
+        })
+
+te_df = pd.DataFrame(results).sort_values(
+    "transfer_entropy",
+    ascending=False
+)
+
+print("\nTransfer Entropy detectada:\n")
+print(te_df)
+
+# ==========================================
+
+# 4. Visualização
+plot_all(df_enc, output_dir=OUTPUT_DIR,
+         window_hours=48, start_offset_hours=200)
+
+# 5. Tensor final
+X, indices = prepare_snn_tensor(df_enc, encoded_cols,
+                                window_steps=240, stride_steps=30)
