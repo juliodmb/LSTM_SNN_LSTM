@@ -131,6 +131,31 @@ Total canais SNN: 24
 
 
 
+"""
+Pipeline SNN - EBPR PAO/GAO Phase Detection
+Dataset: Agtrup BlueKolding — todas as variáveis SCADA
+Autor: pipeline base para snnTorch 0.9.4
+
+Propósito deste script:
+  Exploração visual ESTÁTICA dos encodings.
+  Não há modelo, não há treino.
+  O output é visual — para informar escolhas de hiperparâmetros futuros.
+
+Colunas e encodings aplicados:
+  fosfato_mgL         → rate + delta + latency  (biológico principal)
+  oxigenio_mgL        → rate + delta + latency  (biológico)
+  amonia_mgL          → rate + delta + latency  (biológico)
+  metal_natural_Lh    → rate + delta + latency  (actuador contínuo)
+  metal_colocado_Lh   → rate + delta + latency  (actuador contínuo)
+  sensor_entrada      → rate + delta            (caudal)
+  sensor_saida        → rate + delta            (caudal)
+  vazao_m3h           → rate + delta            (caudal)
+  bomba_coagulante_pct→ rate + delta            (actuador discreto)
+  temperatura_C       → rate                    (ambiente lento)
+
+Total canais SNN: 24
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -174,18 +199,21 @@ print(f"[LOAD] Amostra:\n{df.head(3)}\n")
 # 'ambiente'   → rate
 #   Temperatura — varia lentamente, delta seria quase sempre zero.
 
+# Todas as colunas recebem os 3 encodings: rate + delta + latency
+# A interpretação de cada encoding varia por variável mas a
+# representação é gerada para todas — decisão de quais usar
+# fica para a fase de hiperparâmetros do modelo SNN.
 COL_CONFIG = {
-    'fosfato_mgL':          'biologico',
-    'oxigenio_mgL':         'biologico',
-    'amonia_mgL':           'biologico',
-    'metal_natural_Lh':     'continuo',
-    'metal_colocado_Lh':    'continuo',
-    'sensor_entrada':       'caudal',
-    'sensor_saida':         'caudal',
-    'vazao_m3h':            'caudal',
-    'bomba_coagulante_pct': 'discreto',
-    'temperatura_C':        'ambiente',
-    
+    'fosfato_mgL':          'completo',
+    'oxigenio_mgL':         'completo',
+    'amonia_mgL':           'completo',
+    'metal_natural_Lh':     'completo',
+    'metal_colocado_Lh':    'completo',
+    'sensor_entrada':       'completo',
+    'sensor_saida':         'completo',
+    'vazao_m3h':            'completo',
+    'bomba_coagulante_pct': 'completo',
+    'temperatura_C':        'completo',
 }
 
 TODAS_COLUNAS = list(COL_CONFIG.keys())
@@ -333,15 +361,13 @@ def encode_all(df: pd.DataFrame):
         frm[f'{col}_rate'] = rate_encoding(s, dead)
         encoded_cols.append(f'{col}_rate')
 
-        # delta — todos excepto ambiente
-        if tipo in ('biologico', 'continuo', 'caudal', 'discreto'):
-            frm[f'{col}_delta'] = delta_encoding(s, dead)
-            encoded_cols.append(f'{col}_delta')
+        # delta — todas as colunas
+        frm[f'{col}_delta'] = delta_encoding(s, dead)
+        encoded_cols.append(f'{col}_delta')
 
-        # latency — biológicos e contínuos
-        if tipo in ('biologico', 'continuo'):
-            frm[f'{col}_latency'] = latency_encoding(s, dead)
-            encoded_cols.append(f'{col}_latency')
+        # latency — todas as colunas
+        frm[f'{col}_latency'] = latency_encoding(s, dead)
+        encoded_cols.append(f'{col}_latency')
 
         frames.append(frm)
 
@@ -505,35 +531,13 @@ def _plot_one_column(col: str, tipo: str, df_enc: pd.DataFrame,
 
 def plot_all(df_enc: pd.DataFrame, output_dir: str,
              window_hours: int = 48, start_offset_hours: int = 200):
-
     start = df_enc.index.min() + pd.Timedelta(hours=start_offset_hours)
     end   = start + pd.Timedelta(hours=window_hours)
-
-    win = df_enc[start:end]
-
+    win   = df_enc[start:end]
     print(f"\n[PLOT] Janela: {start} → {end}  ({len(win)} steps)\n")
-
-    # Descobre automaticamente todas as variáveis RAW
-    base_cols = [c.replace("_raw","") for c in df_enc.columns if c.endswith("_raw")]
-
-    for col in base_cols:
-
-        if f"{col}_raw" not in win.columns:
-            continue
-
-        # define tipo automaticamente
-        if "mgL" in col or "metal" in col:
-            tipo = "quimico"
-        elif "sensor" in col:
-            tipo = "sensor"
-        elif "vazao" in col or "bomba" in col:
-            tipo = "controle"
-        elif "temperatura" in col:
-            tipo = "fisico"
-        else:
-            tipo = "outro"
-
-        _plot_one_column(col, tipo, df_enc, win, output_dir, window_hours)
+    for col, tipo in COL_CONFIG.items():
+        if f'{col}_raw' in win.columns:
+            _plot_one_column(col, tipo, df_enc, win, output_dir, window_hours)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. TENSOR FINAL PARA snnTorch
