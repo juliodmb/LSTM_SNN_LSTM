@@ -601,3 +601,121 @@ if __name__ == "__main__":
     print(f"\n[PRONTO] X shape {X.shape} — pronto para torch.FloatTensor(X)")
     print(f"[PRONTO] Próximo passo: snn_model.py")
     print(f"[PRONTO] Ficheiros em: {OUTPUT_DIR}")
+    
+    
+    
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. MAPA CAUSAL (RATE + LATENCY)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_causal_map(df_enc: pd.DataFrame,
+                     encoded_cols: list,
+                     max_lag: int = 60,
+                     min_corr: float = 0.30) -> pd.DataFrame:
+
+    """
+    Descobre relações causais entre variáveis usando
+    cross-correlation temporal.
+
+    max_lag = atraso máximo em steps
+      60 steps = 120 min (dataset 2min)
+
+    min_corr = correlação mínima para considerar ligação.
+    """
+
+    rate_cols = [c for c in encoded_cols if c.endswith("_rate")]
+    lat_cols  = [c for c in encoded_cols if c.endswith("_latency")]
+
+    causal_edges = []
+
+    def scan(cols):
+
+        for a in cols:
+            for b in cols:
+
+                if a == b:
+                    continue
+
+                best_corr = 0
+                best_lag  = 0
+
+                for lag in range(1, max_lag):
+
+                    s1 = df_enc[a]
+                    s2 = df_enc[b].shift(-lag)
+
+                    corr = s1.corr(s2)
+
+                    if abs(corr) > abs(best_corr):
+                        best_corr = corr
+                        best_lag  = lag
+
+                if abs(best_corr) >= min_corr:
+
+                    causal_edges.append({
+                        "cause": a.replace("_rate","").replace("_latency",""),
+                        "effect": b.replace("_rate","").replace("_latency",""),
+                        "lag_steps": best_lag,
+                        "lag_minutes": best_lag * 2,
+                        "corr": best_corr,
+                        "encoding": a.split("_")[-1]
+                    })
+
+    scan(rate_cols)
+    scan(lat_cols)
+
+    causal_df = pd.DataFrame(causal_edges)
+
+    if len(causal_df) > 0:
+        causal_df = causal_df.sort_values("corr", key=np.abs, ascending=False)
+
+    return causal_df
+
+def plot_causal_graph(causal_df: pd.DataFrame, output_dir: str):
+
+    import networkx as nx
+
+    G = nx.DiGraph()
+
+    for _, r in causal_df.iterrows():
+
+        G.add_edge(
+            r["cause"],
+            r["effect"],
+            weight=r["corr"],
+            lag=r["lag_minutes"]
+        )
+
+    plt.figure(figsize=(10,8))
+
+    pos = nx.spring_layout(G, k=0.8)
+
+    nx.draw(
+        G,
+        pos,
+        with_labels=True,
+        node_color="#58a6ff",
+        node_size=2000,
+        font_size=8,
+        edge_color="#d2a8ff"
+    )
+
+    labels = {(u,v):f'{d["lag"]}m' for u,v,d in G.edges(data=True)}
+
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=labels, font_size=7)
+
+    out = os.path.join(output_dir, "causal_map.png")
+
+    plt.savefig(out, dpi=140, bbox_inches="tight")
+    plt.close()
+
+    print(f"[CAUSAL] mapa salvo em {out}")
+
+# 4. Mapa causal do sistema
+causal_df = build_causal_map(df_enc, encoded_cols)
+
+print("\n[CAUSAL MAP]")
+print(causal_df.head(20))
+
+causal_path = os.path.join(OUTPUT_DIR, "causal_edges.csv")
+causal_df.to_csv(causal_path, index=False)
