@@ -1,20 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-
-
-
-
-
 Created on Mon Apr 13 16:53:40 2026
 
 @author: julio
-
-
-
-Demonstração completa e corrigida de todos os componentes do snnTorch 0.9.4
-Baseado exclusivamente na documentação oficial:
-https://snntorch.readthedocs.io/en/latest/
-
 FLUXO COMPLETO DA REDE:
 
   Input x[:, step, :]
@@ -64,22 +52,9 @@ Estrutura:
   3. Três encodings: Rate, Delta, Latency
   4. Análise exploratória visual comparativa
   5. Saída pronta para alimentar snnTorch
-"""
 
-"""
-Pipeline SNN - EBPR PAO/GAO Phase Detection
-Dataset: Agtrup BlueKolding
-Autor: pipeline base para snnTorch 0.9.4
 
-Estrutura:
-  1. Importação e validação do df_rate
-  2. Detecção de dead states por inferência de variação
-  3. Três encodings: Rate, Delta, Latency
-  4. Análise exploratória visual comparativa
-  5. Saída pronta para alimentar snnTorch
-"""
 
-"""
 Pipeline SNN - EBPR PAO/GAO Phase Detection
 Dataset: Agtrup BlueKolding — todas as variáveis SCADA
 Autor: pipeline base para snnTorch 0.9.4
@@ -100,10 +75,6 @@ Colunas do dataset:
   AMBIENTE (condições externas):
     temperatura_C   — temperatura afluente — encoding: rate
     vazao_m3h       — caudal volumétrico   — encoding: rate + delta
-
-
-
-
 
 Propósito deste script:
   Exploração visual ESTÁTICA dos encodings.
@@ -134,6 +105,34 @@ import warnings
 import os
 warnings.filterwarnings('ignore')
 
+import torch
+
+# --------------------------------------------------
+# GPU NVIDIA
+# --------------------------------------------------
+
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+print(f"[DEVICE] {DEVICE}")
+
+if torch.cuda.is_available():
+    print(f"[GPU] {torch.cuda.get_device_name(0)}")
+    print(f"[VRAM] {torch.cuda.get_device_properties(0).total_memory/1024**3:.2f} GB")
+    
+    
+if torch.cuda.is_available():
+
+    torch.backends.cudnn.benchmark = True
+
+    torch.set_float32_matmul_precision("high")
+
+    print(f"[GPU] {torch.cuda.get_device_name(0)}")
+
+else:
+
+    print("[GPU] CPU")    
 # ─────────────────────────────────────────────────────────────────────────────
 # 0. LEITURA DO DATASET REAL
 # ─────────────────────────────────────────────────────────────────────────────
