@@ -61,6 +61,7 @@ venv/
 *.xlsx
 *.csv
 *.pkl
+*.npy
 
 # Jupyter
 .ipynb_checkpoints/
@@ -74,3 +75,9 @@ Rede_neural.py
 dataset_balanceado_pytorch.pt
 visualizacao_becape.py
 visualizacao_gpu.py
+
+
+outputs/X_tensor.npy
+# ignore a pasta inteira de outputs se quiser:
+outputs/
+
