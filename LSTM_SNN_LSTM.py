@@ -1241,3 +1241,833 @@ if __name__ == "__main__":
     # # Loss:   ce_rate_loss (conta spikes) ou ce_temporal_loss (primeiro spike)
     # # Épocas: 50-100 com early stopping
     # ══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
+# DELAY STABILITY ANALYSIS
+# ─────────────────────────────────────────────────────────────────────────────
+def build_delay_stability_map(
+        df_enc,
+        encoded_cols,
+        max_lag=60,
+        min_corr=0.30,
+        window_days=30):
+
+    """
+    Mede se o lag encontrado pelo causal map é estável ao longo do tempo.
+
+    DSI = Delay Stability Index
+
+    DSI ≈ 1.0
+        delay praticamente constante
+
+    DSI ≈ 0.0
+        delay varia muito
+
+    confidence
+        média da correlação encontrada nas janelas
+    """
+
+    STEP_MINUTES = 2
+
+    samples_per_day = int((24 * 60) / STEP_MINUTES)
+    window_size = samples_per_day * window_days
+
+    rate_cols = [c for c in encoded_cols if c.endswith("_rate")]
+    lat_cols  = [c for c in encoded_cols if c.endswith("_latency")]
+
+    results = []
+
+    def scan(cols):
+
+        for a in cols:
+            for b in cols:
+
+                if a == b:
+                    continue
+
+                lag_list = []
+                corr_list = []
+
+                for start in range(
+                        0,
+                        len(df_enc) - window_size,
+                        window_size):
+
+                    end = start + window_size
+
+                    x = df_enc[a].iloc[start:end]
+                    y = df_enc[b].iloc[start:end]
+
+                    best_corr = 0.0
+                    best_lag = 0
+
+                    for lag in range(1, max_lag):
+
+                        corr = x.corr(y.shift(-lag))
+
+                        if pd.isna(corr):
+                            continue
+
+                        if abs(corr) > abs(best_corr):
+                            best_corr = corr
+                            best_lag = lag
+
+                    if abs(best_corr) >= min_corr:
+
+                        lag_list.append(
+                            best_lag * STEP_MINUTES
+                        )
+
+                        corr_list.append(
+                            abs(best_corr)
+                        )
+
+                if len(lag_list) < 3:
+                    continue
+
+                mean_lag = np.mean(lag_list)
+
+                std_lag = np.std(lag_list)
+
+                dsi = 1.0 - (
+                    std_lag /
+                    (mean_lag + 1e-6)
+                )
+
+                dsi = max(0.0, dsi)
+
+                results.append({
+
+                    "cause":
+                        a.replace("_rate", "")
+                         .replace("_latency", ""),
+
+                    "effect":
+                        b.replace("_rate", "")
+                         .replace("_latency", ""),
+
+                    "encoding":
+                        a.split("_")[-1],
+
+                    "mean_lag_min":
+                        round(mean_lag, 2),
+
+                    "std_lag_min":
+                        round(std_lag, 2),
+
+                    "dsi":
+                        round(dsi, 4),
+
+                    "confidence":
+                        round(np.mean(corr_list), 4),
+
+                    "n_windows":
+                        len(lag_list)
+                })
+
+    scan(rate_cols)
+    scan(lat_cols)
+
+    delay_df = pd.DataFrame(results)
+
+    if len(delay_df):
+
+        delay_df = delay_df.sort_values(
+            ["dsi", "confidence"],
+            ascending=False
+        )
+
+    return delay_df
+
+
+causal_df = build_causal_map(
+    df_enc,
+    encoded_cols,
+    max_lag=60,
+    min_corr=0.30
+)
+
+# ── Delay Stability ─────────────────────────────────────────────
+
+delay_df = build_delay_stability_map(
+    df_enc,
+    encoded_cols,
+    max_lag=60,
+    min_corr=0.30,
+    window_days=30
+)
+
+print("\n")
+print("="*80)
+print("DELAY STABILITY ANALYSIS")
+print("="*80)
+
+if len(delay_df):
+
+    print(delay_df.head(30).to_string())
+
+    out = os.path.join(
+        OUTPUT_DIR,
+        "delay_stability.csv"
+    )
+
+    delay_df.to_csv(
+        out,
+        index=False
+    )
+
+    print(f"\n[DELAY] Guardado: {out}")
+    
+    
+# ============================================================
+# LAG CURVE ANALYSIS
+# ============================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+
+STEP_MINUTES = 2
+MAX_LAG = 60
+
+def lag_curve(df, cause, effect, max_lag=60):
+
+    x = df[cause]
+    y = df[effect]
+
+    lags = []
+    corrs = []
+
+    for lag in range(max_lag + 1):
+
+        corr = x.corr(y.shift(-lag))
+
+        if pd.isna(corr):
+            corr = 0
+
+        lags.append(lag * STEP_MINUTES)
+        corrs.append(corr)
+
+    return np.array(lags), np.array(corrs)
+
+
+def plot_lag_curve(df, cause, effect, output_dir):
+
+    lags, corrs = lag_curve(df, cause, effect)
+
+    best_idx = np.argmax(np.abs(corrs))
+
+    best_lag = lags[best_idx]
+    best_corr = corrs[best_idx]
+
+    plt.figure(figsize=(10,5))
+
+    plt.plot(lags, corrs)
+
+    plt.axvline(
+        best_lag,
+        linestyle="--"
+    )
+
+    plt.title(
+        f"{cause} → {effect}\n"
+        f"best lag={best_lag:.0f} min "
+        f"corr={best_corr:.3f}"
+    )
+
+    plt.xlabel("Lag (minutes)")
+    plt.ylabel("Correlation")
+
+    plt.grid(True)
+
+    plt.tight_layout()
+
+    filename = os.path.join(
+        output_dir,
+        f"lagcurve_{cause}_to_{effect}.png"
+    )
+
+    plt.savefig(filename, dpi=300)
+
+    plt.close()
+
+    print("[LAG]", filename)
+
+    return {
+        "cause": cause,
+        "effect": effect,
+        "best_lag_min": best_lag,
+        "best_corr": best_corr
+    }
+
+
+# ============================================================
+# RELAÇÕES MAIS INTERESSANTES
+# ============================================================
+
+pairs = [
+
+    ("fosfato_mgL", "amonia_mgL"),
+
+    ("amonia_mgL", "fosfato_mgL"),
+
+    ("oxigenio_mgL", "fosfato_mgL"),
+
+    ("vazao_m3h", "temperatura_C"),
+
+    ("temperatura_C", "vazao_m3h")
+]
+
+results = []
+
+print()
+print("="*80)
+print("LAG CURVE ANALYSIS")
+print("="*80)
+
+for cause, effect in pairs:
+
+    r = plot_lag_curve(
+        df,
+        cause,
+        effect,
+        OUTPUT_DIR
+    )
+
+    results.append(r)
+
+lag_df = pd.DataFrame(results)
+
+print()
+print(lag_df.to_string())
+
+csv_file = os.path.join(
+    OUTPUT_DIR,
+    "lag_curve_summary.csv"
+)
+
+lag_df.to_csv(
+    csv_file,
+    index=False
+)
+
+print()
+print("[LAG] CSV:", csv_file)    
+
+
+# ============================================================
+# MULTI-LAG CURVE
+# RATE vs DELTA vs LATENCY
+# ============================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+
+STEP_MINUTES = 2
+MAX_LAG = 120
+
+# ------------------------------------------------------------
+# função lag curve
+# ------------------------------------------------------------
+
+def lag_curve(x, y, max_lag=120):
+
+    lags = []
+    corrs = []
+
+    for lag in range(max_lag + 1):
+
+        corr = x.corr(
+            y.shift(-lag)
+        )
+
+        if pd.isna(corr):
+            corr = 0
+
+        lags.append(
+            lag * STEP_MINUTES
+        )
+
+        corrs.append(corr)
+
+    return np.array(lags), np.array(corrs)
+
+
+# ------------------------------------------------------------
+# análise
+# ------------------------------------------------------------
+
+def compare_temporal_languages(
+        df_enc,
+        base_a,
+        base_b,
+        output_dir):
+
+    encodings = [
+        "rate",
+        "delta",
+        "latency"
+    ]
+
+    results = []
+
+    plt.figure(figsize=(12,6))
+
+    for enc in encodings:
+
+        col_a = f"{base_a}_{enc}"
+        col_b = f"{base_b}_{enc}"
+
+        if (
+            col_a not in df_enc.columns or
+            col_b not in df_enc.columns
+        ):
+            continue
+
+        lags, corrs = lag_curve(
+            df_enc[col_a],
+            df_enc[col_b],
+            MAX_LAG
+        )
+
+        best_idx = np.argmax(
+            np.abs(corrs)
+        )
+
+        best_lag = lags[best_idx]
+
+        best_corr = corrs[best_idx]
+
+        results.append({
+
+            "encoding": enc,
+
+            "best_lag_min":
+                round(best_lag,2),
+
+            "best_corr":
+                round(best_corr,4)
+        })
+
+        plt.plot(
+            lags,
+            corrs,
+            label=(
+                f"{enc}"
+                f" lag={best_lag:.0f}m"
+                f" corr={best_corr:.3f}"
+            )
+        )
+
+    plt.axhline(
+        0,
+        linestyle="--"
+    )
+
+    plt.grid(True)
+
+    plt.xlabel(
+        "Lag (minutes)"
+    )
+
+    plt.ylabel(
+        "Correlation"
+    )
+
+    plt.title(
+        f"{base_a} ↔ {base_b}\n"
+        "Rate vs Delta vs Latency"
+    )
+
+    plt.legend()
+
+    plt.tight_layout()
+
+    filename = os.path.join(
+        output_dir,
+        f"temporal_language_{base_a}_vs_{base_b}.png"
+    )
+
+    plt.savefig(
+        filename,
+        dpi=300
+    )
+
+    plt.close()
+
+    print()
+    print("="*70)
+    print(base_a, "<->", base_b)
+    print("="*70)
+
+    print(
+        pd.DataFrame(results)
+        .to_string(index=False)
+    )
+
+    print()
+    print("[PLOT]")
+    print(filename)
+
+    return pd.DataFrame(results)
+
+
+# ============================================================
+# EXECUTAR
+# ============================================================
+
+all_results = []
+
+pairs = [
+
+    (
+        "fosfato_mgL",
+        "amonia_mgL"
+    ),
+
+    (
+        "oxigenio_mgL",
+        "fosfato_mgL"
+    ),
+
+    (
+        "vazao_m3h",
+        "temperatura_C"
+    ),
+
+    (
+        "sensor_entrada",
+        "sensor_saida"
+    )
+]
+
+for a, b in pairs:
+
+    res = compare_temporal_languages(
+        df_enc,
+        a,
+        b,
+        OUTPUT_DIR
+    )
+
+    res["cause"] = a
+    res["effect"] = b
+
+    all_results.append(res)
+
+summary = pd.concat(
+    all_results,
+    ignore_index=True
+)
+
+csv_file = os.path.join(
+    OUTPUT_DIR,
+    "temporal_language_summary.csv"
+)
+
+summary.to_csv(
+    csv_file,
+    index=False
+)
+
+print()
+print("="*70)
+print("SUMMARY")
+print("="*70)
+
+print(
+    summary.to_string()
+)
+
+print()
+print(csv_file)
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import (
+    r2_score,
+    mean_absolute_error,
+    root_mean_squared_error
+)
+
+import pandas as pd
+import numpy as np
+
+print("\n" + "=" * 80)
+print("RECONSTRUÇÃO DOS SINAIS")
+print("=" * 80)
+
+resultados = []
+
+for col in TODAS_COLUNAS:
+
+    raw_col = f"{col}_raw"
+
+    if raw_col not in df_enc.columns:
+        continue
+
+    canais = []
+
+    for enc in ["rate", "delta", "latency"]:
+
+        c = f"{col}_{enc}"
+
+        if c in df_enc.columns:
+            canais.append(c)
+
+    if len(canais) == 0:
+        continue
+
+    X = df_enc[canais].copy()
+
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(0)
+
+    y = df_enc[raw_col].copy()
+
+    mask = np.isfinite(y)
+
+    X = X.loc[mask]
+    y = y.loc[mask]
+
+    model = LinearRegression()
+
+    model.fit(X, y)
+
+    pred = model.predict(X)
+
+    r2 = r2_score(y, pred)
+
+    mae = mean_absolute_error(y, pred)
+
+    rmse = root_mean_squared_error(y, pred)
+
+    resultados.append(
+        {
+            "variavel": col,
+            "R2": r2,
+            "MAE": mae,
+            "RMSE": rmse
+        }
+    )
+
+df_rec = pd.DataFrame(resultados)
+
+df_rec = df_rec.sort_values(
+    "R2",
+    ascending=False
+)
+
+print(df_rec.round(4))
+
+df_rec.to_csv(
+    "outputs/reconstruction_metrics.csv",
+    index=False
+)
+
+print("\n[CSV]")
+print("outputs/reconstruction_metrics.csv")
+
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import (
+    r2_score,
+    mean_absolute_error,
+    root_mean_squared_error
+)
+
+import pandas as pd
+import numpy as np
+
+print("\n" + "=" * 80)
+print("RECONSTRUÇÃO INDIVIDUAL DOS ENCODINGS")
+print("=" * 80)
+
+resultados = []
+
+for col in TODAS_COLUNAS:
+
+    raw_col = f"{col}_raw"
+
+    if raw_col not in df_enc.columns:
+        continue
+
+    y = df_enc[raw_col].copy()
+
+    mask_y = np.isfinite(y)
+
+    y = y[mask_y]
+
+    for enc in ["rate", "delta", "latency"]:
+
+        enc_col = f"{col}_{enc}"
+
+        if enc_col not in df_enc.columns:
+            continue
+
+        X = df_enc[[enc_col]].copy()
+
+        X = X.replace([np.inf, -np.inf], np.nan)
+        X = X.fillna(0)
+
+        X = X.loc[mask_y]
+
+        model = LinearRegression()
+
+        model.fit(X, y)
+
+        pred = model.predict(X)
+
+        r2 = r2_score(y, pred)
+
+        mae = mean_absolute_error(y, pred)
+
+        rmse = root_mean_squared_error(y, pred)
+
+        resultados.append(
+            {
+                "variavel": col,
+                "encoding": enc,
+                "R2": r2,
+                "MAE": mae,
+                "RMSE": rmse
+            }
+        )
+
+df_rec = pd.DataFrame(resultados)
+
+df_rec = df_rec.sort_values(
+    ["variavel", "R2"],
+    ascending=[True, False]
+)
+
+print(df_rec.round(4))
+
+df_rec.to_csv(
+    "outputs/reconstruction_by_encoding.csv",
+    index=False
+)
+
+print("\n[CSV]")
+print("outputs/reconstruction_by_encoding.csv")
+
+print(df_enc["bomba_coagulante_pct_raw"].describe())
+
+print(
+    df_enc["bomba_coagulante_pct_raw"]
+    .value_counts()
+    .head(20)
+)
+
+
+from scipy.stats import entropy
+import numpy as np
+
+x = df_enc["bomba_coagulante_pct_raw"]
+
+hist, _ = np.histogram(x, bins=50)
+
+hist = hist[hist > 0]
+
+H = entropy(hist / hist.sum(), base=2)
+
+Hmax = np.log2(50)
+
+print("Entropia:", H)
+print("Entropia normalizada:", H / Hmax)
+
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
+
+col = "bomba_coagulante_pct"
+
+X = df_enc[[f"{col}_rate"]].fillna(0)
+
+y = df_enc[f"{col}_raw"]
+
+model = RandomForestRegressor(
+    n_estimators=100,
+    random_state=42
+)
+
+model.fit(X, y)
+
+pred = model.predict(X)
+
+print("R2 =", r2_score(y, pred))
+
+
+from sklearn.feature_selection import mutual_info_regression
+import pandas as pd
+import numpy as np
+
+print("=" * 80)
+print("MUTUAL INFORMATION - RAW vs ENCODING")
+print("=" * 80)
+
+resultados = []
+
+variaveis = [
+    "fosfato_mgL",
+    "oxigenio_mgL",
+    "amonia_mgL",
+    "metal_natural_Lh",
+    "metal_colocado_Lh",
+    "sensor_entrada",
+    "sensor_saida",
+    "vazao_m3h",
+    "bomba_coagulante_pct",
+    "temperatura_C",
+]
+
+for var in variaveis:
+
+    raw_col = f"{var}_raw"
+
+    if raw_col not in df_enc.columns:
+        continue
+
+    y = df_enc[raw_col]
+
+    for enc in ["rate", "delta", "latency"]:
+
+        enc_col = f"{var}_{enc}"
+
+        if enc_col not in df_enc.columns:
+            continue
+
+        tmp = pd.DataFrame({
+            "x": df_enc[enc_col],
+            "y": y
+        }).dropna()
+
+        if len(tmp) < 100:
+            continue
+
+        X = tmp[["x"]]
+
+        Y = tmp["y"]
+
+        mi = mutual_info_regression(
+            X,
+            Y,
+            random_state=42
+        )[0]
+
+        resultados.append({
+            "variavel": var,
+            "encoding": enc,
+            "mutual_information": mi
+        })
+
+df_mi = (
+    pd.DataFrame(resultados)
+    .sort_values(
+        "mutual_information",
+        ascending=False
+    )
+)
+
+print(df_mi.to_string(index=False))
